@@ -1,0 +1,24 @@
+plugins {
+    id 'java-library'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    api 'com.amazonaws:aws-java-sdk-core:1.11.894'
+    api 'com.squareup.okhttp3:okhttp:4.9.0'
+
+    testImplementation 'com.amazonaws:aws-java-sdk-sts:1.11.894'
+    testImplementation 'ch.qos.logback:logback-classic:1.2.3'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.9.0'
+}
+
+testing {
+    suites {
+        test {
+            useJUnitJupiter('5.8.1')
+        }
+    }
+}
