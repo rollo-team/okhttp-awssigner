@@ -7,10 +7,12 @@ repositories {
 }
 
 dependencies {
-    api 'com.amazonaws:aws-java-sdk-core:1.11.894'
+    api 'software.amazon.awssdk:auth:2.17.183'
     api 'com.squareup.okhttp3:okhttp:4.9.0'
 
-    testImplementation 'com.amazonaws:aws-java-sdk-sts:1.11.894'
+    implementation 'software.amazon.awssdk:http-client-spi:2.17.183'
+
+    testImplementation 'software.amazon.awssdk:sts:2.17.183'
     testImplementation 'ch.qos.logback:logback-classic:1.2.3'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.9.0'
 }

@@ -1,90 +1,83 @@
 package com.rollo.okhttp3.awssigner;
 
-import com.amazonaws.DefaultRequest;
-import com.amazonaws.auth.AWS4Signer;
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.http.HttpMethodName;
+import okhttp3.Headers;
 import okhttp3.Interceptor;
-import okhttp3.Request;
-import okhttp3.RequestBody;
 import okhttp3.Response;
 import okio.Buffer;
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.signer.Aws4Signer;
+import software.amazon.awssdk.auth.signer.params.Aws4SignerParams;
+import software.amazon.awssdk.http.SdkHttpFullRequest;
+import software.amazon.awssdk.http.SdkHttpMethod;
+import software.amazon.awssdk.regions.Region;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
+import java.util.Map.Entry;
 
-import static com.amazonaws.auth.internal.SignerConstants.AUTHORIZATION;
-import static com.amazonaws.auth.internal.SignerConstants.X_AMZ_DATE;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
 /**
- * okhttp3 interceptor for signing AWS requests. Based on AWS4Signer from AWS SDK.
+ * okhttp3 interceptor for signing AWS requests. Based on Aws4Signer from AWS SDK v2.
  *
  * @author <A href="mailto:alexey@abashev.ru">Alexey Abashev</A>
  */
 public class AwsSigningInterceptor implements Interceptor {
-    private final AWS4Signer signer;
+    private final Logger log = LoggerFactory.getLogger(AwsSigningInterceptor.class);
+    private final AwsCredentialsProvider credentialsProvider;
     private final String serviceName;
-    private final AWSCredentialsProvider credentialsProvider;
+    private final Region region;
 
-    public AwsSigningInterceptor(AWSCredentialsProvider credentialsProvider, String serviceName, String regionName) {
-        this.signer = new AWS4Signer();
-
-        this.signer.setServiceName(serviceName);
-        this.signer.setRegionName(regionName);
-
+    public AwsSigningInterceptor(AwsCredentialsProvider credentialsProvider, String serviceName, String regionName) {
         this.credentialsProvider = credentialsProvider;
         this.serviceName = serviceName;
+        this.region = Region.of(regionName);
     }
 
     @NotNull
     @Override
     public Response intercept(@NotNull Chain chain) throws IOException {
+        var signer = Aws4Signer.create();
         var request = chain.request();
         var url = request.url();
-        var container = new DefaultRequest<>(serviceName);
-
-        try {
-            container.setEndpoint(new URI(url.scheme(), url.host(), null, null));
-        } catch (URISyntaxException e) {
-            throw new IOException("Not able to build URI from " + url, e);
-        }
-
-        container.setHttpMethod(HttpMethodName.fromValue(chain.request().method()));
-        container.setResourcePath(url.encodedPath());
-        container.setParameters(
-                url.queryParameterNames().stream().collect(toMap(identity(), url::queryParameterValues))
-        );
-
         var headers = request.headers();
 
-        container.setHeaders(
-                headers.names().stream().collect(toMap(identity(), n -> headers.values(n).get(0)))
-        );
+        log.debug("Original headers\n{}", headers);
 
-        RequestBody body = request.body();
+        var container = SdkHttpFullRequest.builder().
+                protocol(url.scheme()).
+                host(url.host()).
+                port(url.port()).
+                method(SdkHttpMethod.fromValue(chain.request().method())).
+                encodedPath(url.encodedPath()).
+                rawQueryParameters(
+                    url.queryParameterNames().stream().collect(toMap(identity(), url::queryParameterValues))
+                ).headers(
+                    headers.names().stream().collect(toMap(identity(), headers::values))
+                );
 
-        if (body != null) {
+        if (request.body() != null) {
             Buffer sink = new Buffer();
-            body.writeTo(sink);
+            request.body().writeTo(sink);
 
-            container.setContent(new BufferedInputStream(sink.inputStream()));
+            container.contentStreamProvider(() -> new BufferedInputStream(sink.inputStream()));
         }
 
-        // Sign it
-        signer.sign(container, credentialsProvider.getCredentials());
+        var newHeaders = signer.sign(
+                container.build(),
+                Aws4SignerParams.builder().
+                        signingRegion(region).
+                        signingName(serviceName).
+                        awsCredentials(credentialsProvider.resolveCredentials()).
+                        build()
+        ).headers().entrySet().stream().collect(toMap(Entry::getKey, e -> e.getValue().get(0)));
 
-        Request signedRequest = request.newBuilder()
-                .removeHeader(AUTHORIZATION)
-                .addHeader(AUTHORIZATION, container.getHeaders().get(AUTHORIZATION))
-                .addHeader(X_AMZ_DATE, container.getHeaders().get(X_AMZ_DATE))
-                .build();
+        log.debug("New headers\n{}", newHeaders);
 
-        return chain.proceed(signedRequest);
+        return chain.proceed(request.newBuilder().headers(Headers.of(newHeaders)).build());
     }
 }
-
