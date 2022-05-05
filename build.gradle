@@ -6,6 +6,8 @@ repositories {
     mavenCentral()
 }
 
+group 'com.github.rollo-team'
+
 dependencies {
     api 'software.amazon.awssdk:auth:2.17.183'
     api 'com.squareup.okhttp3:okhttp:4.9.0'
